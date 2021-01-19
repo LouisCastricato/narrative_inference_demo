@@ -12,30 +12,36 @@ from src.transformer_models import GPT2Model, GPT2LMHeadModel, GPT2MemModel
 import random
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--model_type',type=str,default='nomem')
-    parser.add_argument('--model_dir',type=str,default='./')
-    parser.add_argument('--source',type=str,default='example.jsonl')
-    parser.add_argument('--save_filename',type=str,default='outputs.jsonl')
-    parser.add_argument('--decoding',type=str,default='beam')
-    parser.add_argument('--beam',type=int,default=10)
-args = parser.parse_args()
-print(args)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-random.seed(args.seed)
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed_all(args.seed)
+parser = argparse.ArgumentParser()
+parser.add_argument('--seed', type=int, default=0)
+parser.add_argument('--model_type',type=str,default='\'mem\'')
+parser.add_argument('--model_dir',type=str,default='model/')
+parser.add_argument('--source',type=str,default='example.jsonl')
+parser.add_argument('--save_filename',type=str,default='outputs.jsonl')
+parser.add_argument('--decoding',type=str,default='beam')
+parser.add_argument('--beam',type=int,default=3)
+device = torch.device("cuda")
 
-if args.model_type == 'mem':
+seed = '0'
+model_type = 'mem'
+model_dir = 'model/'
+source = 'example.jsonl'
+save_filename = 'outputs.jsonl'
+decoding = 'beam'
+beam = 3
+
+#random.seed(args.seed)
+#np.random.seed(args.seed)
+#torch.manual_seed(args.seed)
+#torch.cuda.manual_seed_all(args.seed)
+
+if model_type == 'mem':
    use_mem = True
 else:
    use_mem = False
 
-model_path = os.path.join(args.model_dir, args.model_type)
+model_path = os.path.join(model_dir, model_type)
 device = torch.device(device)
 text_encoder = GPT2Tokenizer.from_pretrained('gpt2')
 encoder = text_encoder.encoder
@@ -94,7 +100,7 @@ text_encoder.encoder = encoder
 text_encoder.decoder = decoder
 n_vocab = len(text_encoder.encoder)
 
-if args.model_type == 'mem':
+if model_type == 'mem':
     model = GPT2MemModel.from_pretrained('gpt2')
 else:
     model = GPT2LMHeadModel.from_pretrained('gpt2')
@@ -105,10 +111,9 @@ model.load_state_dict(torch.load(model_path))
 model.eval()
 
 n_gpu = 1
-print("device", device, "n_gpu", n_gpu)
 gen_len = 50
 
-def topk(model, XMB,i, n=1,k=args.beam, mem=None,use_pointer=None,use_scores=None,size_mem=0):
+def topk(model, XMB,i, n=1,k=beam, mem=None,use_pointer=None,use_scores=None,size_mem=0):
     import copy
     gen = torch.Tensor([encoder['<|PAD|>']] * gen_len).long().to(device) #torch.zeros((gen_len)).long().to(device)
     prob = 0
@@ -371,7 +376,6 @@ def get_token(next_idx):
     except:
        return next_idx
 
-gen_file = open(os.path.join(args.model_type + '_' + args.decoding + '_' + args.save_filename),'w')
 
 dims_ = ["<|xNeed|>","<|xIntent|>","<|xWant|>","<|oEffect|>","<|xReact|>","<|oWant|>","<|oReact|>","<|xEffect|>","<|xAttr|>"]
 dims = [encoder[d] for d in dims_]
@@ -396,66 +400,70 @@ def handle_empty(list_of_rels):
        list_of_rels.extend([[] for i in range(max_mem_size - len(list_of_rels))])
     return list_of_rels 
 
-if use_mem:
-   external_mem = {}
+    
+def run_paracomet():
+  gen_file = open(os.path.join(model_type + '_' + decoding + '_' + save_filename),'w')
 
-max_mem_size = 45
-n_updates = 0 
+  if use_mem:
+    external_mem = {}
 
-teX = [json.loads(l) for l in open(args.source).readlines()]
-for line in teX:
-    id = line['id']
-    print(id)
-    if use_mem:
-       if id not in external_mem.keys():
-          external_mem[id] = []
-          size_mem = 0
-    original = line['full_context'][:5]
-    save_output = {}
-    save_output["storyid"] = id
-    save_output["story"] = ' '.join(original)
-    for i in range(len(original)):
-        sent_id = "<|sent" + str(i) + "|>"
-        with torch.no_grad():
-             for d in range(len(dims)):
-                 XMB = [encoder['<|PAD|>']] * 600
-                 if ('xIntent' in dims_[d] or 'xNeed' in dims_[d] or 'xAttr' in dims_[d]):
-                    context = text_encoder.convert_tokens_to_ids(text_encoder.tokenize(' '.join(original[:i+1])))
-                 else:
-                    context = text_encoder.convert_tokens_to_ids(text_encoder.tokenize(' '.join(original)))
-                 context += [encoder[sent_id], dims[d]]
-                 i_1 = len(context)-1
-                 XMB[:len(context)] = context 
-                 XMB = torch.tensor(XMB,dtype=torch.long).to(device)
-                 XMB = XMB.unsqueeze(0)
-                 if use_mem and size_mem != 0:
-                    mem = external_mem[id]
-                    mem = torch.LongTensor([pad_rels(r) for r in mem]).unsqueeze(0)
-                    if args.decoding == 'topk':
-                       gen = topk(model, XMB,i_1,mem=mem,size_mem=size_mem)
-                    else:
-                       gen = beam_search(model, XMB,i_1,mem=mem,num_beams=args.beam,size_mem=size_mem,use_mem=use_mem)
-                 else:
-                    if args.decoding == 'topk':
-                       if use_mem:
-                          gen = topk(model, XMB, i_1,size_mem=size_mem)
-                       else:
-                          gen = topk(model, XMB, i_1)
-                    else:
-                       if use_mem:
-                          gen = beam_search(model, XMB, i_1,num_beams=args.beam,size_mem=size_mem,use_mem=use_mem)
-                       else:
-                          gen = beam_search(model, XMB, i_1,num_beams=args.beam)
-                 gen = [clean_gen(g) for g in gen]
-                 if use_mem:
-                    mem_gen = gen[0]
-                    external_mem[id].append(text_encoder.convert_tokens_to_ids(text_encoder.tokenize(mem_gen)))
-                    size_mem += 1
-                 if sent_id + '_' + "generated_relations" in save_output.keys(): 
-                    save_output[sent_id + '_' + "generated_relations"].append(gen)
-                    save_output[sent_id + '_' + "generated_dims"].append([decoder[dims[d]]] * len(gen))
-                 else:
-                    save_output[sent_id + '_' + "generated_relations"] = [gen]
-                    save_output[sent_id + '_' + "generated_dims"] = [[decoder[dims[d]]] * len(gen)]
-    gen_file.write(json.dumps(save_output) + '\n')
-    n_updates += 1
+  max_mem_size = 45
+  n_updates = 0 
+
+  teX = [json.loads(l) for l in open(source).readlines()]
+  for line in teX:
+      id = line['id']
+      print(id)
+      if use_mem:
+        if id not in external_mem.keys():
+            external_mem[id] = []
+            size_mem = 0
+      original = line['full_context'][:5]
+      save_output = {}
+      save_output["storyid"] = id
+      save_output["story"] = ' '.join(original)
+      for i in range(len(original)):
+          sent_id = "<|sent" + str(i) + "|>"
+          with torch.no_grad():
+              for d in range(len(dims)):
+                  XMB = [encoder['<|PAD|>']] * 600
+                  if ('xIntent' in dims_[d] or 'xNeed' in dims_[d] or 'xAttr' in dims_[d]):
+                      context = text_encoder.convert_tokens_to_ids(text_encoder.tokenize(' '.join(original[:i+1])))
+                  else:
+                      context = text_encoder.convert_tokens_to_ids(text_encoder.tokenize(' '.join(original)))
+                  context += [encoder[sent_id], dims[d]]
+                  i_1 = len(context)-1
+                  XMB[:len(context)] = context 
+                  XMB = torch.tensor(XMB,dtype=torch.long).to(device)
+                  XMB = XMB.unsqueeze(0)
+                  if use_mem and size_mem != 0:
+                      mem = external_mem[id]
+                      mem = torch.LongTensor([pad_rels(r) for r in mem]).unsqueeze(0)
+                      if decoding == 'topk':
+                        gen = topk(model, XMB,i_1,mem=mem,size_mem=size_mem)
+                      else:
+                        gen = beam_search(model, XMB,i_1,mem=mem,num_beams=beam,size_mem=size_mem,use_mem=use_mem)
+                  else:
+                      if decoding == 'topk':
+                        if use_mem:
+                            gen = topk(model, XMB, i_1,size_mem=size_mem)
+                        else:
+                            gen = topk(model, XMB, i_1)
+                      else:
+                        if use_mem:
+                            gen = beam_search(model, XMB, i_1,num_beams=beam,size_mem=size_mem,use_mem=use_mem)
+                        else:
+                            gen = beam_search(model, XMB, i_1,num_beams=beam)
+                  gen = [clean_gen(g) for g in gen]
+                  if use_mem:
+                      mem_gen = gen[0]
+                      external_mem[id].append(text_encoder.convert_tokens_to_ids(text_encoder.tokenize(mem_gen)))
+                      size_mem += 1
+                  if sent_id + '_' + "generated_relations" in save_output.keys(): 
+                      save_output[sent_id + '_' + "generated_relations"].append(gen)
+                      save_output[sent_id + '_' + "generated_dims"].append([decoder[dims[d]]] * len(gen))
+                  else:
+                      save_output[sent_id + '_' + "generated_relations"] = [gen]
+                      save_output[sent_id + '_' + "generated_dims"] = [[decoder[dims[d]]] * len(gen)]
+      gen_file.write(json.dumps(save_output) + '\n')
+      n_updates += 1
