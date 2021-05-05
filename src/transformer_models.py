@@ -31,7 +31,7 @@ import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 from torch.nn.parameter import Parameter
 from transformers.modeling_utils import PreTrainedModel, Conv1D, prune_conv1d_layer, SequenceSummary
-from transformers.configuration_gpt2 import GPT2Config
+from transformers import GPT2Config
 from transformers.file_utils import add_start_docstrings
 from transformers import GPT2Tokenizer 
 

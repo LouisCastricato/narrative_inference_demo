@@ -467,3 +467,5 @@ def run_paracomet():
                       save_output[sent_id + '_' + "generated_dims"] = [[decoder[dims[d]]] * len(gen)]
       gen_file.write(json.dumps(save_output) + '\n')
       n_updates += 1
+
+run_paracomet()
